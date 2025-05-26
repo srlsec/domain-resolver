@@ -1,106 +1,101 @@
-import os
-import sys
+import sys, os
+from colorama import Fore
+import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor
-from socket import gethostbyname, gaierror
 from datetime import datetime
-import pandas as pd
-from os.path import exists
 import os, platform, datetime, time, warnings, sys
+import os, warnings
+from os.path import exists
+from concurrent.futures import ThreadPoolExecutor
 
 
-if len(sys.argv) < 2:
+# Get script directory and set resolver path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+resolver_path = os.path.join(script_dir, "resolvers.txt")
+
+home_dir = os.path.expanduser("~")
+
+
+
+if len(sys.argv) < 3:
     print("Error: No input file provided.")
-    print("Usage: domain-resolver all-domains.txt")
+    print("Usage  : domain-checker <input_file> <output_path> <output_file>")
+    print("Example: domain-checker root-domains.txt ../domains no")
+    print("Example: domain-checker 1-list-subds.txt . 1-all-subds.txt")
     sys.exit(1)
 
-
 input_file = sys.argv[1]
-root_domain_path = sys.argv[2]
-scan_type = sys.argv[3]
+output_path = sys.argv[2]
+output_file = sys.argv[3]
 
-# Banner
+
+dnsx = 'dnsx'
+PUREDNS = 'puredns'
+SUFFLEDNS = 'shuffledns'
+
+target_path = output_path
+
+file_exists = exists(target_path)
+if file_exists is False:
+    os.mkdir(target_path) 
+
+
 def banner():
-    print("""
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|D|O|M|A|I|N|-|R|E|S|O|L|V|E|R| by srlsec
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-""")
+    # https://patorjk.com/software/taag/#p=testall&f=Graffiti&t=cobratoxin
+    dec = "\n| Subdomain bruteforce using subdomains list |"
+    banner="""
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ |D|O|M|A|I|N|-|C|H|E|C|K|E|R|  by srlsec
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+"""
+    print(dec + banner)
+
+def time_now():
+    a = datetime.datetime.now().strftime("%H:%M:%S")
+    return a
+
+def send_notification(message, provider_id=None):
+    command = ["notify", "-silent"]
     
-
-def domain_resolver_single(domain):
-    resolved_domain_file = f"resolved-domains.txt"
-    unresolved_domain_file = f"unresolved-domains.txt"
+    if provider_id:
+        command.extend(["-id", provider_id])
     
-    try:
-        ip = gethostbyname(domain)
-        print({"domain": domain, "ip": ip})
+    with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True) as process:
+        process.communicate(message)
 
-        # Append result to output file (thread-safe)
-        with open(resolved_domain_file, "a") as f:
-            f.write(f"{domain}\n")
+def domaintoip(input_subd_list, output_file_name):
 
-    except gaierror:
-        pass
+    file_exists = exists(output_file_name)
+    if file_exists is False:
+        # cmd = f'{dnsx} -d {input_domain} -w {wordlist} -t 400 -silent > {output_file}'
+        cmd = f"{PUREDNS} resolve {input_subd_list} --resolvers {resolver_path} --skip-validation  -l 2000 -w {output_file_name}"
+        # cmd = f"{SUFFLEDNS} -l {input_subd_list} -r {resolver_path} -silent -mode resolve -t 1000 -o {output_file_name}"
+        print(cmd)
+        subprocess.check_output((f"{cmd}"), shell=True, text=True)
 
-# Resolve domain to IP
-def domain_resolver(domain, root_domain):
-    resolved_domain_file = f"{root_domain_path}/{root_domain}/resolved-domains.txt"
-    unresolved_domain_file = f"{root_domain_path}/{root_domain}/unresolved-domains.txt"
+    if os.path.exists(f"{output_file_name}"):
+        with open(output_file_name, 'r') as fp:
+            lines = len(fp.readlines())
     
-    # Ensure the directory exists
-    os.makedirs(f"{root_domain_path}/{root_domain}", exist_ok=True)
+    if lines == 0: 
+        print(Fore.WHITE + f"+ [{time_now()}] [active-scan] []" " [" + Fore.RED + f"{lines}" + Fore.WHITE + "]")
+        # send_notification(f"{input_domain} bruteforce-subdomains : {lines} ")
+    else:
+        print(Fore.WHITE + f"+ [{time_now()}] [active-scan] []" " [" + Fore.GREEN + f"{lines}" + Fore.WHITE + "]")
+        #end_notification(f"{input_domain} bruteforce-subdomains : {lines} ")
 
-    try:
-        ip = gethostbyname(domain)
-        print({"domain": domain, "ip": ip})
 
-        # Append result to output file (thread-safe)
-        with open(resolved_domain_file, "a") as f:
-            f.write(f"{domain}\n")
-
-    except gaierror:
-        pass
-        #  # Append result to output file (thread-safe)
-        # with open(unresolved_domain_file, "a") as f:
-        #     f.write(f"{domain}\n")
-        # # print({"domain": domain, "ip": ""})
-
+    
 def main():
-    max_threads=50
-    if scan_type == 'p':
-        try:
-            with open(input_file, 'r') as f:
-                root_domains = f.read().splitlines()
-            
-            for root_domain in root_domains:
-                print(f"Processing: {root_domain}")
-
-                root_domain_file = f"{root_domain_path}/{root_domain}/1-valid-subds.txt"
-                if not os.path.exists(root_domain_file):
-                    print(f"Error: {root_domain_file} not found.")
-                    continue
-
-                with open(root_domain_file, 'r') as f:
-                    domains = f.read().splitlines()
-
-                with ThreadPoolExecutor(max_workers=max_threads) as executor:
-                    executor.map(lambda domain: domain_resolver(domain, root_domain), domains)
-
-        except FileNotFoundError:
-            print("Error: Input file not found.")
-        except Exception as e:
-            print(f"Unexpected error: {e}")
-
-    elif scan_type == 's':
-        root_domain_file = input_file
-
-        with open(root_domain_file, 'r') as f:
-            domains = f.read().splitlines()
-
-
-        with ThreadPoolExecutor(max_workers=max_threads) as executor:
-            executor.map(lambda domain: domain_resolver_single(domain), domains)
+    if input_file == "root-domains.txt":
+        pass
+    if input_file != "root-domains.txt" and input_file[-4:] == ".txt":
+        input_subd_list = input_file
+        output_file_name = output_file
+        domaintoip(input_subd_list, output_file_name)
+    else:
+        root_domain = input_file
+        domaintoip(root_domain)
 
 
 if __name__ == "__main__":
@@ -110,7 +105,6 @@ if __name__ == "__main__":
 
         print(datetime.datetime.now().strftime( "================ STARTED - %d/%m/%Y %H:%M:%S 00:00:00:00 ================") + '\n')
 
-        
         main()
         
         now = datetime.datetime.now()
